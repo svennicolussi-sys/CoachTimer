@@ -1,0 +1,21 @@
+name: Deploy to TestFlight
+
+on:
+  workflow_dispatch: # Ermöglicht das manuelle Starten am Handy
+
+jobs:
+  deploy:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # HIER: Fügen Sie die Build-Schritte für Ihr Framework ein (z.B. Flutter oder React Native)
+      # Am Ende dieses Schritts muss eine signierte .ipa-Datei entstehen.
+
+      - name: Upload to App Store Connect
+        run: |
+          xcrun altool --upload-app --type ios \
+            --file "pfad/zu/ihrer/app.ipa" \
+            --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
+            --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
