@@ -1,21 +1,76 @@
-name: Deploy to TestFlight
+name: Base44 to TestFlight
 
 on:
-  workflow_dispatch: # Ermöglicht das manuelle Starten am Handy
+  push:
+    branches: [ main ]
 
 jobs:
   deploy:
-    runs-on: macos-latest
+    runs-on: macos-14 # Nutzt Apple Silicon Runner für schnellere Builds
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # HIER: Fügen Sie die Build-Schritte für Ihr Framework ein (z.B. Flutter oder React Native)
-      # Am Ende dieses Schritts muss eine signierte .ipa-Datei entstehen.
+      # 1. Base44 Toolchain & Abhängigkeiten installieren
+      - name: Setup Node.js and Base44
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Upload to App Store Connect
+      - name: Install Dependencies
         run: |
-          xcrun altool --upload-app --type ios \
-            --file "pfad/zu/ihrer/app.ipa" \
-            --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
-            --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}"
+          npm install
+          npm install -g @base44/cli
+
+      # 2. Apple Zertifikate für das Signieren installieren
+      - name: Install Apple Certificate and Provisioning Profile
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Variablen definieren
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Zertifikate aus GitHub Secrets decodieren
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+
+          # Temporären Schlüsselbund erstellen
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Zertifikat importieren
+          security import $CERTIFICATE_PATH -k $KEYCHAIN_PATH -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Provisioning Profile an den richtigen Ort kopieren
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      # 3. Base44 App für iOS bauen
+      - name: Build Base44 Project
+        run: |
+          base44 build ios --release --output ./build
+
+      # 4. In eine .ipa-Datei verpacken (falls Base44 dies nicht automatisch tut)
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          mv ./build/ios/YOUR_APP_NAME.app Payload/
+          zip -r YourApp.ipa Payload
+          rm -rf Payload
+
+      # 5. Zu Apple TestFlight hochladen
+      - name: Upload to Apple TestFlight
+        uses: apple-actions/upload-testflight-build@v4
+        with:
+          app-path: 'YourApp.ipa'
+          issuer-id: ${{ secrets.APPSTORE_ISSUER_ID }}
+          api-key-id: ${{ secrets.APPSTORE_KEY_ID }}
+          api-private-key: ${{ secrets.APPSTORE_PRIVATE_KEY }}
